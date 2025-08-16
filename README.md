@@ -5,7 +5,7 @@ Intercepts Revit’s native Delete. Shows a checklist; requires code when deleti
 - .NET Framework 4.8, x64
 - References: RevitAPI.dll, RevitAPIUI.dll (from Revit 2025)
 
-## Install (Option A – per machine)
+## Installation
 - Copy `bin\x64\Release\SecureDeleteAddin.dll` to:
   C:\ProgramData\Autodesk\Revit\Addins\SecureDelete\
 - Copy `install\SecureDelete.addin` to:
