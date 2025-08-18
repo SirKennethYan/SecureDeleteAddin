@@ -26,7 +26,9 @@ namespace SecureDeleteAddin
             var delId = RevitCommandId.LookupPostableCommandId(PostableCommand.Delete);
             var binding = app.CreateAddInCommandBinding(delId);
 
-            binding.CanExecute += (s, e) => { e.CanExecute = e.ActiveDocument != null; };
+            // Don’t override Revit’s enablement; just subscribe to BeforeExecuted.
+            // If you prefer a guard: binding.CanExecute += (s,e)=> { e.CanExecute = e.CanExecute && e.ActiveDocument != null; };
+
             binding.BeforeExecuted += OnBeforeDelete;
             return Result.Succeeded;
         }
@@ -36,16 +38,14 @@ namespace SecureDeleteAddin
         private void OnBeforeDelete(object sender, BeforeExecutedEventArgs e)
         {
             var doc = e.ActiveDocument;
-            if (doc == null) { e.Cancel = true; return; }
+            if (doc == null) { return; } // let Revit handle
+
             var uidoc = new UIDocument(doc);
 
+            // In sketch/group editors, Revit doesn’t expose ElementIds. Selection IDs will be empty.
+            // In that case: do nothing here → let native Delete work.
             var selIds = uidoc.Selection.GetElementIds()?.ToList() ?? new List<ElementId>();
-            if (selIds.Count == 0)
-            {
-                TaskDialog.Show("Secure Delete", "Nothing selected.");
-                e.Cancel = true;
-                return;
-            }
+            if (selIds.Count == 0) { return; }
 
             // Build review list and detect high-risk
             var items = new List<ElemItem>();
@@ -55,17 +55,17 @@ namespace SecureDeleteAddin
                 var el = doc.GetElement(id);
                 if (el == null) continue;
                 string cat = el.Category?.Name ?? "<No Category>";
-                // name fallback
                 string name = string.IsNullOrWhiteSpace(el.Name) ? $"Id {el.Id.Value}" : el.Name;
                 items.Add(new ElemItem { Id = id, Label = $"{cat} — {name}", Category = cat });
                 if (HighRiskCats.Contains(cat)) hasHighRisk = true;
             }
 
-            // Decide if code is required
-            bool requireCode = hasHighRisk || selIds.Count >= ThresholdCount;
-            if (DateTime.UtcNow <= _codeValidUntil) requireCode = false; // grace window active
+            // If somehow nothing resolvable, fall back to native behavior
+            if (items.Count == 0) { return; }
 
-            // Show dialog (checklist always; password only if required)
+            bool requireCode = hasHighRisk || selIds.Count >= ThresholdCount;
+            if (DateTime.UtcNow <= _codeValidUntil) requireCode = false; // grace active
+
             using (var dlg = new SecureDeleteDialog(items, requireCode))
             {
                 if (dlg.ShowDialog() != WinForms.DialogResult.OK) { e.Cancel = true; return; }
@@ -78,7 +78,7 @@ namespace SecureDeleteAddin
                         e.Cancel = true;
                         return;
                     }
-                    _codeValidUntil = DateTime.UtcNow + Grace; // start/refresh grace
+                    _codeValidUntil = DateTime.UtcNow + Grace;
                 }
 
                 var idsToDelete = dlg.CheckedIds.ToList();
@@ -89,8 +89,9 @@ namespace SecureDeleteAddin
                     return;
                 }
 
+                // Restrict native Delete to approved items
                 uidoc.Selection.SetElementIds(new HashSet<ElementId>(idsToDelete));
-                // allow native Delete to proceed
+                // then allow native Delete to run
             }
         }
 
